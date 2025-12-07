@@ -1,40 +1,72 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { SendIcon, PaperclipIcon, StopIcon, XIcon, ImageIcon } from './Icons';
+
+import React, { useRef, useEffect, useCallback, useState } from 'react';
+import { PlusIcon, XIcon, UploadCloudIcon, PaperPlaneIcon, StopCircleIcon, ImageIcon, AnalyzeImageIcon, CameraIcon, PaperclipIcon, MicrophoneIcon, CodeHtmlIcon, CodeCssIcon, CodeJsIcon, LoadingSpinner } from './Icons';
+import SupportHeart from './SupportHeart';
+import { UserProfile } from '../types';
+
+type ImageUpload = { id: number; dataUrl: string; file: File; isLoading: boolean };
 
 interface ChatInputProps {
-  onSendMessage: (message: string, image?: string) => void;
+  input: string;
+  setInput: (value: string) => void;
+  imageUploads: ImageUpload[];
+  onRemoveImage: (id: number) => void;
+  onProcessFiles: (files: FileList) => Promise<void>;
+  onSendMessage: (message: string) => void;
   isLoading: boolean;
+  isChatReady: boolean;
   onStopGeneration: () => void;
-  onToggleImageModal: () => void;
+  // New props for actions from the pop-up menu
+  onGenerateImageClick: () => void;
+  onAnalyzeImageClick: () => void;
+  onCameraClick: () => void;
+  onUploadClick: () => void;
+  onMicClick: () => void;
+  onSendCodeMessage: (codeType: 'html' | 'css' | 'js') => void;
+  // For Speech-to-text
+  isListening: boolean;
+  onToggleListening: () => void;
+  // For support heart
+  userProfile: UserProfile;
+  onHeartClick: () => void;
 }
 
-const fileToBase64 = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.readAsDataURL(file);
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = error => reject(error);
-    });
-};
-
-const ChatInput: React.FC<ChatInputProps> = ({ onSendMessage, isLoading, onStopGeneration, onToggleImageModal }) => {
-  const [input, setInput] = useState('');
-  const [image, setImage] = useState<string | null>(null);
+const ChatInput: React.FC<ChatInputProps> = ({ 
+    input, setInput, imageUploads, onRemoveImage, onProcessFiles, 
+    onSendMessage, isLoading, isChatReady, onStopGeneration,
+    onGenerateImageClick, onAnalyzeImageClick, onCameraClick, 
+    onUploadClick, onMicClick, onSendCodeMessage,
+    isListening, onToggleListening,
+    userProfile, onHeartClick
+}) => {
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
+  const [isActionsOpen, setIsActionsOpen] = useState(false);
+  const dragCounter = useRef(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const actionsMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
-      textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
+      const scrollHeight = textareaRef.current.scrollHeight;
+      textareaRef.current.style.height = `${scrollHeight}px`;
     }
   }, [input]);
 
+  // Close actions menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (actionsMenuRef.current && !actionsMenuRef.current.contains(event.target as Node)) {
+        setIsActionsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
   const handleSend = () => {
-    if ((input.trim() || image) && !isLoading) {
-      onSendMessage(input.trim(), image || undefined);
-      setInput('');
-      setImage(null);
+    if ((input.trim() || imageUploads.length > 0) && !isLoading && isChatReady) {
+      onSendMessage(input.trim());
     }
   };
 
@@ -45,85 +77,146 @@ const ChatInput: React.FC<ChatInputProps> = ({ onSendMessage, isLoading, onStopG
     }
   };
   
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (file) {
-          if (file.size > 4 * 1024 * 1024) { // 4MB limit
-            alert('Image size should not exceed 4MB.');
-            return;
-          }
-          const base64 = await fileToBase64(file);
-          setImage(base64);
-      }
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
-  };
+  const handleDragEnter = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current++;
+    if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
+      setIsDraggingOver(true);
+    }
+  }, []);
 
-  const handleAttachClick = () => {
-      fileInputRef.current?.click();
-  };
-  
-  const removeImage = () => {
-      setImage(null);
-  };
+  const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current--;
+    if (dragCounter.current === 0) {
+      setIsDraggingOver(false);
+    }
+  }, []);
+
+  const handleDrop = useCallback(async (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingOver(false);
+    dragCounter.current = 0;
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      await onProcessFiles(e.dataTransfer.files);
+      e.dataTransfer.clearData();
+    }
+  }, [onProcessFiles]);
 
   return (
-    <div className="w-full max-w-4xl mx-auto px-4">
-      <div className="relative rounded-2xl bg-gray-800 border border-gray-700 shadow-lg flex flex-col">
-        {image && (
-            <div className="p-2 pl-6 pt-4">
-                <div className="relative inline-block">
-                    <img src={image} alt="Preview" className="h-20 w-20 object-cover rounded-md" />
-                    <button onClick={removeImage} className="absolute -top-2 -right-2 bg-gray-700 rounded-full p-0.5 text-white hover:bg-gray-600">
-                        <XIcon />
-                    </button>
-                </div>
-            </div>
-        )}
-        <div className="flex items-center">
-            <input 
-                type="file" 
-                ref={fileInputRef} 
-                onChange={handleFileChange}
-                accept="image/png, image/jpeg, image/webp"
-                className="hidden"
-            />
-             <button
-                onClick={handleAttachClick}
-                disabled={isLoading}
-                className="p-2 ml-4 rounded-full text-gray-400 hover:text-white hover:bg-gray-700 transition-colors"
-                aria-label="Attach image"
-            >
-                <PaperclipIcon />
-            </button>
-            <button
-                onClick={onToggleImageModal}
-                disabled={isLoading}
-                className="p-2 rounded-full text-gray-400 hover:text-white hover:bg-gray-700 transition-colors"
-                aria-label="Generate an image"
-            >
-                <ImageIcon />
-            </button>
-            <textarea
-              ref={textareaRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="اكتب رسالتك هنا..."
-              rows={1}
-              className="w-full bg-transparent text-gray-200 placeholder-gray-500 py-4 pl-2 pr-16 resize-none focus:outline-none max-h-48"
-              disabled={isLoading}
-            />
-            <button
-              onClick={isLoading ? onStopGeneration : handleSend}
-              disabled={!isLoading && !input.trim() && !image}
-              className="absolute right-4 bottom-3.5 p-2 rounded-full bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors"
-              aria-label={isLoading ? "Stop generation" : "Send message"}
-            >
-              {isLoading ? <StopIcon /> : <SendIcon isDisabled={!input.trim() && !image} />}
-            </button>
+    <div
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragEnter} // Re-use enter logic
+      onDrop={handleDrop}
+      className={`max-w-4xl mx-auto px-4 relative transition-all duration-300 ${isDraggingOver ? 'scale-105' : ''}`}
+    >
+      {isDraggingOver && (
+        <div className="absolute inset-0 bg-indigo-500/10 border-2 border-dashed border-indigo-500 rounded-2xl flex flex-col items-center justify-center pointer-events-none z-20">
+          <UploadCloudIcon />
+          <p className="mt-2 text-indigo-500 font-semibold">Drop files to upload</p>
         </div>
+      )}
+      
+      {imageUploads.length > 0 && (
+        <div className="mb-2 flex flex-wrap gap-2">
+          {imageUploads.map(upload => (
+            <div key={upload.id} className="relative group w-16 h-16">
+              {upload.isLoading ? (
+                <div className="w-full h-full bg-gray-200 dark:bg-slate-700 rounded-lg flex items-center justify-center">
+                  <LoadingSpinner />
+                </div>
+              ) : (
+                <img src={upload.dataUrl} alt="Upload preview" className="w-full h-full object-cover rounded-lg" />
+              )}
+              <button
+                onClick={() => onRemoveImage(upload.id)}
+                className="absolute -top-1 -right-1 bg-gray-800 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+              >
+                <XIcon />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="relative flex items-end gap-2 p-2 bg-gray-100 dark:bg-slate-900/80 rounded-xl shadow-md border border-gray-200 dark:border-slate-700">
+        <SupportHeart 
+            level={userProfile.supportLevel}
+            clicks={userProfile.supportClicks}
+            onClick={onHeartClick}
+        />
+        <div className="relative" ref={actionsMenuRef}>
+          <button
+            onClick={() => setIsActionsOpen(prev => !prev)}
+            className="flex-shrink-0 w-9 h-9 flex items-center justify-center rounded-full bg-gray-200 dark:bg-slate-700 text-gray-600 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-slate-600 transition-colors"
+          >
+            <PlusIcon />
+          </button>
+          {isActionsOpen && (
+            <div className="absolute bottom-full left-0 mb-2 w-52 bg-white dark:bg-slate-800 rounded-lg shadow-lg border border-gray-200 dark:border-slate-700 p-2 z-10">
+              <button onClick={() => { onGenerateImageClick(); setIsActionsOpen(false); }} className="w-full text-left flex items-center gap-2 p-2 rounded-md hover:bg-gray-100 dark:hover:bg-slate-700 text-sm">
+                <ImageIcon /> Generate Image
+              </button>
+              <button onClick={() => { onAnalyzeImageClick(); setIsActionsOpen(false); }} className="w-full text-left flex items-center gap-2 p-2 rounded-md hover:bg-gray-100 dark:hover:bg-slate-700 text-sm">
+                <AnalyzeImageIcon /> Analyze Image
+              </button>
+              <button onClick={() => { onCameraClick(); setIsActionsOpen(false); }} className="w-full text-left flex items-center gap-2 p-2 rounded-md hover:bg-gray-100 dark:hover:bg-slate-700 text-sm">
+                <CameraIcon /> Use Camera
+              </button>
+              <button onClick={() => { onUploadClick(); setIsActionsOpen(false); }} className="w-full text-left flex items-center gap-2 p-2 rounded-md hover:bg-gray-100 dark:hover:bg-slate-700 text-sm">
+                <PaperclipIcon /> Upload File
+              </button>
+              <div className="border-t border-gray-200 dark:border-slate-700 my-1"></div>
+              <p className="px-2 py-1 text-xs text-gray-500">Generate Code:</p>
+              <button onClick={() => { onSendCodeMessage('html'); setIsActionsOpen(false); }} className="w-full text-left flex items-center gap-2 p-2 rounded-md hover:bg-gray-100 dark:hover:bg-slate-700 text-sm">
+                  <CodeHtmlIcon /> HTML from Prompt
+              </button>
+              <button onClick={() => { onSendCodeMessage('css'); setIsActionsOpen(false); }} className="w-full text-left flex items-center gap-2 p-2 rounded-md hover:bg-gray-100 dark:hover:bg-slate-700 text-sm">
+                  <CodeCssIcon /> CSS from Prompt
+              </button>
+              <button onClick={() => { onSendCodeMessage('js'); setIsActionsOpen(false); }} className="w-full text-left flex items-center gap-2 p-2 rounded-md hover:bg-gray-100 dark:hover:bg-slate-700 text-sm">
+                  <CodeJsIcon /> JS from Prompt
+              </button>
+            </div>
+          )}
+        </div>
+        <textarea
+          ref={textareaRef}
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="Type your message, or drop images here..."
+          rows={1}
+          className="flex-1 bg-transparent resize-none p-2 focus:outline-none placeholder-gray-500 dark:placeholder-gray-400 max-h-48"
+          disabled={isLoading || !isChatReady}
+        />
+        <button
+          onClick={onToggleListening}
+          className={`flex-shrink-0 w-9 h-9 flex items-center justify-center rounded-full transition-colors ${isListening ? 'bg-red-500/20 text-red-500' : 'bg-gray-200 dark:bg-slate-700 text-gray-600 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-slate-600'}`}
+          disabled={isLoading}
+        >
+          <MicrophoneIcon isListening={isListening} />
+        </button>
+        {isLoading ? (
+          <button
+            onClick={onStopGeneration}
+            className="flex-shrink-0 w-9 h-9 flex items-center justify-center rounded-full bg-red-500 text-white hover:bg-red-600 transition-colors"
+          >
+            <StopCircleIcon />
+          </button>
+        ) : (
+          <button
+            onClick={handleSend}
+            disabled={(!input.trim() && imageUploads.length === 0) || !isChatReady}
+            className="flex-shrink-0 w-9 h-9 flex items-center justify-center rounded-full bg-indigo-600 text-white hover:bg-indigo-500 disabled:bg-gray-400 dark:disabled:bg-slate-600 disabled:cursor-not-allowed transition-colors"
+          >
+            <PaperPlaneIcon />
+          </button>
+        )}
       </div>
     </div>
   );
